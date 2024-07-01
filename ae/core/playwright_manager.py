@@ -126,39 +126,85 @@ class PlaywrightManager:
             await PlaywrightManager._playwright.stop()
             PlaywrightManager._playwright = None # type: ignore
 
-
     async def create_browser_context(self):
-        user_dir:str = os.environ.get('BROWSER_STORAGE_DIR', '')
+        user_dir: str = os.environ.get('BROWSER_STORAGE_DIR', '')
+        logger.info(f"Attempting to create browser context. User dir: {user_dir}")
+        
         if self.browser_type == "chromium":
-            logger.info(f"User dir: {user_dir}")
             try:
-                PlaywrightManager._browser_context = await PlaywrightManager._playwright.chromium.launch_persistent_context(user_dir,
-                    channel= "chrome", headless=self.isheadless,
-                    args=["--disable-blink-features=AutomationControlled",
-                        "--disable-session-crashed-bubble",  # disable the restore session bubble
-                        "--disable-infobars",  # disable informational popups,
-                        ],
-                        no_viewport=True
+                # 尝试使用系统安装的 Chrome
+                PlaywrightManager._browser_context = await PlaywrightManager._playwright.chromium.launch_persistent_context(
+                    user_dir,
+                    channel="chrome",
+                    headless=self.isheadless,
+                    args=[
+                        "--disable-blink-features=AutomationControlled",
+                        "--disable-session-crashed-bubble",
+                        "--disable-infobars",
+                        "--no-sandbox",  # 添加这个参数可能有助于在某些受限环境中运行
+                    ],
+                    no_viewport=True
                 )
+                logger.info("Successfully created browser context using system Chrome.")
             except Exception as e:
-                if "Target page, context or browser has been closed" in str(e):
-                    new_user_dir = tempfile.mkdtemp()
-                    logger.error(f"Failed to launch persistent context with user dir {user_dir}: {e} Trying to launch with a new user dir {new_user_dir}")
-                    PlaywrightManager._browser_context = await PlaywrightManager._playwright.chromium.launch_persistent_context(new_user_dir,
-                        channel= "chrome", headless=self.isheadless,
-                        args=["--disable-blink-features=AutomationControlled",
-                            "--disable-session-crashed-bubble",  # disable the restore session bubble
-                            "--disable-infobars",  # disable informational popups,
+                logger.error(f"Error launching Chrome: {e}")
+                
+                if "Chromium distribution 'chrome' is not found" in str(e):
+                    logger.info("Attempting to use Chromium instead of Chrome...")
+                    try:
+                        # 尝试使用 Chromium
+                        PlaywrightManager._browser_context = await PlaywrightManager._playwright.chromium.launch_persistent_context(
+                            user_dir,
+                            headless=self.isheadless,
+                            args=[
+                                "--disable-blink-features=AutomationControlled",
+                                "--disable-session-crashed-bubble",
+                                "--disable-infobars",
+                                "--no-sandbox",
                             ],
                             no_viewport=True
+                        )
+                        logger.info("Successfully created browser context using Chromium.")
+                    except Exception as chromium_error:
+                        logger.error(f"Error launching Chromium: {chromium_error}")
+                        try:
+                            # 如果 Chrome 和 Chromium 都失败，尝试使用 Firefox
+                            PlaywrightManager._browser_context = await PlaywrightManager._playwright.firefox.launch_persistent_context(
+                                user_dir,
+                                headless=self.isheadless,
+                                args=[
+                                    "--disable-blink-features=AutomationControlled",
+                                    "--disable-session-crashed-bubble",
+                                    "--disable-infobars",
+                                ],
+                                no_viewport=True
+                            )
+                            logger.info("Successfully created browser context using Firefox.")
+                        except Exception as firefox_error:
+                            logger.error(f"Error launching Firefox: {firefox_error}")
+                            raise ValueError("Unable to launch any supported browser. Please ensure a compatible browser is installed.") from None
+                elif "Target page, context or browser has been closed" in str(e):
+                    new_user_dir = tempfile.mkdtemp()
+                    logger.warning(f"Failed to launch persistent context with user dir {user_dir}. Trying with a new user dir {new_user_dir}")
+                    PlaywrightManager._browser_context = await PlaywrightManager._playwright.chromium.launch_persistent_context(
+                        new_user_dir,
+                        channel="chrome",
+                        headless=self.isheadless,
+                        args=[
+                            "--disable-blink-features=AutomationControlled",
+                            "--disable-session-crashed-bubble",
+                            "--disable-infobars",
+                            "--no-sandbox",
+                        ],
+                        no_viewport=True
                     )
-                elif "Chromium distribution 'chrome' is not found " in str(e):
-                    raise ValueError("Chrome is not installed on this device. Install Google Chrome or install playwright using 'playwright install chrome'. Refer to the readme for more information.") from None
+                    logger.info(f"Successfully created browser context with new user dir: {new_user_dir}")
                 else:
                     raise e from None
         else:
             raise ValueError(f"Unsupported browser type: {self.browser_type}")
-
+    
+        logger.info("Browser context creation completed.")
 
     async def get_browser_context(self):
             """
